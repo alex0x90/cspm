@@ -73,6 +73,11 @@ class BaseCheck(ABC):
         """Return a unique identifier for this check type."""
         pass
 
+    def get_impact(self) -> str:
+        """Return a description of the security impact if this check fails.
+        Override in subclasses to provide check-specific impact statements."""
+        return ""
+
     @abstractmethod
     def check(self) -> List[Finding]:
         """
@@ -88,13 +93,21 @@ class BaseCheck(ABC):
         Template method that executes the check with error handling.
 
         Calls check() and catches any exceptions, converting them
-        to ERROR findings using the error handler.
+        to ERROR findings using the error handler. Automatically
+        injects impact into all returned findings.
 
         Returns:
             List[Finding]: A list of Finding objects.
         """
         try:
-            return self.check()
+            findings = self.check()
+            # Auto-inject impact into all findings from this check
+            impact = self.get_impact()
+            if impact:
+                for finding in findings:
+                    if not finding.impact:
+                        finding.impact = impact
+            return findings
         except Exception as e:
             error_info = handle_aws_error(e)
             return [
@@ -106,6 +119,7 @@ class BaseCheck(ABC):
                     description=self.get_description(),
                     finding="",
                     remediation="",
+                    impact=self.get_impact(),
                     resource_id="N/A",
                     region=self.region,
                     error_message=error_info["message"],

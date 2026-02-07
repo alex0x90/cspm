@@ -48,6 +48,7 @@ class Finding:
     description: str
     finding: str = ""
     remediation: str = ""
+    impact: str = ""
     resource_id: str = ""
     region: str = ""
     error_message: str = ""
