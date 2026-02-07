@@ -27,7 +27,7 @@ A Python-based Cloud Security Posture Management tool that scans AWS services fo
               ▼                   ▼                    ▼
      ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
      │  S3 Checks   │   │  RDS Checks  │   │  EC2 Checks  │
-     │  (5 rules)   │   │  (5 rules)   │   │  (5 rules)   │
+     │  (9 rules)   │   │  (5 rules)   │   │  (5 rules)   │
      └──────┬───────┘   └──────┬───────┘   └──────┬───────┘
             │                  │                   │
             └──────────────────┼───────────────────┘
@@ -66,7 +66,7 @@ cspm/
 │   ├── detector.py               # Orchestrator - runs all checks
 │   ├── checks/
 │   │   ├── base_check.py         # Abstract base class for checks
-│   │   ├── s3_checks.py          # 5 S3 security checks
+│   │   ├── s3_checks.py          # 9 S3 security checks
 │   │   ├── rds_checks.py         # 5 RDS security checks
 │   │   └── ec2_checks.py         # 5 EC2 security checks
 │   ├── models/
@@ -86,7 +86,8 @@ cspm/
 - **Python 3.8+**
 - **AWS Account** with IAM credentials configured
 - **IAM Permissions** — the scanning identity needs read-only access:
-  - `s3:ListAllMyBuckets`, `s3:GetBucketPolicy`, `s3:GetBucketAcl`, `s3:GetBucketEncryption`, `s3:GetBucketVersioning`, `s3:GetPublicAccessBlock`, `s3:GetBucketLogging`
+  - `s3:ListAllMyBuckets`, `s3:GetBucketPolicy`, `s3:GetBucketAcl`, `s3:GetBucketEncryption`, `s3:GetBucketVersioning`, `s3:GetPublicAccessBlock`, `s3:GetBucketLogging`, `s3:GetObjectLockConfiguration`
+  - `s3control:GetPublicAccessBlock` (account-level public access block)
   - `rds:DescribeDBInstances`
   - `ec2:DescribeSecurityGroups`, `ec2:DescribeVolumes`, `ec2:DescribeInstances`, `ec2:DescribeKeyPairs`
   - `sts:GetCallerIdentity`
@@ -185,15 +186,19 @@ python -m src.main --service all --region us-east-1 --profile my-profile
 
 ## Security Checks
 
-### S3 Checks (5)
+### S3 Checks (9)
 
-| ID     | Check                      | Severity | What It Detects                                 |
-|--------|----------------------------|----------|--------------------------------------------------|
-| S3-001 | Public Bucket Access       | HIGH     | Public read/write via policies or ACLs           |
-| S3-002 | Bucket Encryption          | HIGH     | Missing default server-side encryption           |
-| S3-003 | Bucket Versioning          | MEDIUM   | Versioning not enabled                           |
-| S3-004 | Public Access Block        | HIGH     | Missing or partially disabled public access block|
-| S3-005 | Bucket Logging             | MEDIUM   | Server access logging not enabled                |
+| ID     | Check                            | Severity | What It Detects                                              |
+|--------|----------------------------------|----------|--------------------------------------------------------------|
+| S3-001 | Public Bucket Access             | HIGH     | Public read/write via policies or ACLs                       |
+| S3-002 | Bucket Encryption                | HIGH     | Missing SSE-KMS encryption (distinguishes SSE-S3 vs SSE-KMS)|
+| S3-003 | Bucket Versioning                | MEDIUM   | Versioning not enabled (includes MFA Delete status)          |
+| S3-004 | Public Access Block              | HIGH     | Missing or partially disabled bucket-level public access block|
+| S3-005 | Bucket Logging                   | MEDIUM   | Server access logging not enabled                            |
+| S3-006 | Encryption in Transit (HTTPS)    | HIGH     | Missing aws:SecureTransport deny policy                      |
+| S3-007 | MFA Delete                       | MEDIUM   | MFA Delete not enabled on versioned buckets                  |
+| S3-008 | Object Lock                      | MEDIUM   | Object Lock (WORM) not enabled for immutability              |
+| S3-009 | Account-Level Public Access Block| HIGH     | Account-level public access block not configured             |
 
 ### RDS Checks (5)
 
@@ -215,32 +220,47 @@ python -m src.main --service all --region us-east-1 --profile my-profile
 | EC2-004 | IAM Instance Profile   | MEDIUM   | Instances without an IAM role attached                   |
 | EC2-005 | Key Pair Usage         | LOW      | Unused/orphaned key pairs                                |
 
-## Example Output (JSON)
+## Example Output (JSON Report)
+
+When misconfigurations are found, a JSON report is saved to `reports/` with `description` and `impact` for each issue:
 
 ```json
 {
   "scan_date": "2026-02-07T12:00:00.000000",
-  "services": ["s3", "rds", "ec2"],
-  "region": "us-east-1",
   "account_id": "123456789012",
-  "summary": {
-    "total_checks": 42,
-    "passed": 35,
-    "failed": 5,
-    "errors": 2
-  },
-  "findings": [
+  "region": "us-east-1",
+  "total_misconfigurations": 2,
+  "misconfigurations": [
     {
-      "check_id": "S3-001",
-      "check_name": "S3 Public Bucket Access",
+      "check_id": "S3-006",
+      "check_name": "S3 Encryption in Transit (HTTPS)",
       "severity": "HIGH",
-      "status": "FAILED",
-      "description": "Checks whether S3 buckets have public read or write access...",
-      "finding": "Bucket 'my-bucket' has public access via: bucket policy.",
-      "remediation": "1. Navigate to the S3 console...\n2. Go to Permissions...",
       "resource_id": "my-bucket",
-      "region": "us-east-1",
-      "error_message": ""
+      "description": "Checks whether S3 buckets enforce HTTPS-only access by having a bucket policy that denies requests when aws:SecureTransport is false.",
+      "issue": "Bucket 'my-bucket' does not enforce HTTPS-only access. Data in transit may be unencrypted.",
+      "impact": "Without enforced HTTPS, data transferred to/from S3 can be intercepted via man-in-the-middle (MITM) attacks on unencrypted HTTP connections. Attackers on the same network can capture sensitive data in plaintext. This violates encryption-in-transit requirements of PCI DSS, HIPAA, and most security frameworks.",
+      "remediation": [
+        "1. Open the S3 console and select the bucket.",
+        "2. Go to the 'Permissions' tab > 'Bucket Policy'.",
+        "3. Add a policy statement that denies all S3 actions when aws:SecureTransport is false.",
+        "4. This ensures all data in transit is encrypted via TLS/HTTPS."
+      ]
+    },
+    {
+      "check_id": "S3-003",
+      "check_name": "S3 Bucket Versioning",
+      "severity": "MEDIUM",
+      "resource_id": "my-bucket",
+      "description": "Checks whether S3 buckets have versioning enabled to protect against accidental deletion or overwrites. Also checks if MFA Delete is enabled.",
+      "issue": "Bucket 'my-bucket' does not have versioning enabled (Status: Disabled).",
+      "impact": "Without versioning, accidental or malicious deletion of objects is permanent and unrecoverable. Versioning protects against ransomware attacks, application bugs that corrupt data, and human errors.",
+      "remediation": [
+        "1. Open the S3 console and select the bucket.",
+        "2. Go to 'Properties' > 'Bucket Versioning'.",
+        "3. Click 'Edit' and enable versioning.",
+        "4. Configure lifecycle rules to manage version retention and storage costs.",
+        "5. Enable MFA Delete for additional protection against unauthorized deletions."
+      ]
     }
   ]
 }
@@ -262,7 +282,7 @@ OK
 
 ## Research
 
-The full security research document with 15 misconfigurations (5 per service), including attack scenarios and step-by-step remediation, is available at:
+The full security research document with 19 misconfigurations (9 for S3, 5 for RDS, 5 for EC2), including attack scenarios and step-by-step remediation, is available at:
 
 [research/misconfigurations.md](research/misconfigurations.md)
 
