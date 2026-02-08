@@ -161,13 +161,10 @@ def main(argv=None):
         for finding in failed_findings:
             print()
             print(f"  [{finding.severity}] {finding.check_id} - {finding.check_name}")
-            print(f"  Resource:    {finding.resource_id}")
-            print(f"  Description: {finding.description}")
-            print(f"  Issue:       {finding.finding}")
-            if finding.impact:
-                print(f"  Impact:      {finding.impact}")
+            print(f"  Resource: {finding.resource_id}")
+            print(f"  Issue:    {finding.finding}")
             if finding.status == Status.ERROR:
-                print(f"  Error:       {finding.error_message}")
+                print(f"  Error:    {finding.error_message}")
             print()
             print("-" * 60)
 
@@ -180,17 +177,14 @@ def main(argv=None):
             "misconfigurations": [],
         }
         for finding in failed_findings:
-            entry = {
+            misconfig_report["misconfigurations"].append({
                 "check_id": finding.check_id,
                 "check_name": finding.check_name,
                 "severity": finding.severity,
                 "resource_id": finding.resource_id,
-                "description": finding.description,
                 "issue": finding.finding,
-                "impact": finding.impact,
                 "remediation": finding.remediation.split("\n") if finding.remediation else [],
-            }
-            misconfig_report["misconfigurations"].append(entry)
+            })
 
         # Write JSON report to reports folder
         os.makedirs(REPORTS_DIR, exist_ok=True)
