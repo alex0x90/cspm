@@ -27,7 +27,7 @@ A Python-based Cloud Security Posture Management tool that scans AWS services fo
               ▼                   ▼                    ▼
      ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
      │  S3 Checks   │   │  RDS Checks  │   │  EC2 Checks  │
-     │  (9 rules)   │   │  (5 rules)   │   │  (5 rules)   │
+     │  (9 rules)   │   │              |   │              │
      └──────┬───────┘   └──────┬───────┘   └──────┬───────┘
             │                  │                   │
             └──────────────────┼───────────────────┘
