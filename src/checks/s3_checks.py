@@ -810,15 +810,15 @@ class S3AccountPublicAccessBlockCheck(BaseCheck):
         return findings
 
 
-# Registry of all S3 checks for easy discovery
+# Registry of all S3 checks — ordered HIGH → MEDIUM
 S3_CHECKS = [
-    S3PublicAccessCheck,
-    S3EncryptionCheck,
-    S3VersioningCheck,
-    S3PublicAccessBlockCheck,
-    S3LoggingCheck,
-    S3TransitEncryptionCheck,
-    S3MFADeleteCheck,
-    S3ObjectLockCheck,
-    S3AccountPublicAccessBlockCheck,
+    S3PublicAccessCheck,           # S3-001  HIGH
+    S3EncryptionCheck,             # S3-002  HIGH
+    S3PublicAccessBlockCheck,      # S3-004  HIGH
+    S3TransitEncryptionCheck,      # S3-006  HIGH
+    S3AccountPublicAccessBlockCheck,  # S3-009  HIGH
+    S3VersioningCheck,             # S3-003  MEDIUM
+    S3LoggingCheck,                # S3-005  MEDIUM
+    S3MFADeleteCheck,              # S3-007  MEDIUM
+    S3ObjectLockCheck,             # S3-008  MEDIUM
 ]

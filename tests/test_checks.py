@@ -33,6 +33,13 @@ from src.checks.ec2_checks import (
     EC2IAMRoleCheck,
     EC2KeyPairCheck,
 )
+from src.checks.iam_checks import (
+    IAMRootAccessKeysCheck,
+    IAMMFACheck,
+    IAMOverlyPermissivePoliciesCheck,
+    IAMPasswordPolicyCheck,
+    IAMStaleAccessKeysCheck,
+)
 from src.utils.formatter import format_json, format_text
 from src.utils.error_handler import handle_aws_error, is_permission_error, should_retry
 
@@ -562,6 +569,241 @@ class TestEC2KeyPairCheck(unittest.TestCase):
 
         findings = self.check.execute()
         self.assertEqual(findings[0].status, Status.FAILED)
+
+
+# =====================================================================
+# IAM Check Tests
+# =====================================================================
+
+class TestIAMRootAccessKeysCheck(unittest.TestCase):
+    """Tests for IAMRootAccessKeysCheck."""
+
+    def setUp(self):
+        self.client = MagicMock()
+        self.check = IAMRootAccessKeysCheck(client=self.client, region="us-east-1")
+
+    def test_no_root_keys(self):
+        self.client.get_account_summary.return_value = {
+            "SummaryMap": {"AccountAccessKeysPresent": 0}
+        }
+        findings = self.check.execute()
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].status, Status.PASSED)
+
+    def test_root_keys_present(self):
+        self.client.get_account_summary.return_value = {
+            "SummaryMap": {"AccountAccessKeysPresent": 1}
+        }
+        findings = self.check.execute()
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].status, Status.FAILED)
+        self.assertIn("root", findings[0].issue.lower())
+
+
+class TestIAMMFACheck(unittest.TestCase):
+    """Tests for IAMMFACheck."""
+
+    def setUp(self):
+        self.client = MagicMock()
+        self.check = IAMMFACheck(client=self.client, region="us-east-1")
+
+    def test_root_and_user_mfa_enabled(self):
+        self.client.get_account_summary.return_value = {
+            "SummaryMap": {"AccountMFAEnabled": 1}
+        }
+        self.check.context = {"users": [{"UserName": "alice"}]}
+        self.client.list_mfa_devices.return_value = {
+            "MFADevices": [{"SerialNumber": "arn:aws:iam::123:mfa/alice"}]
+        }
+        findings = self.check.execute()
+        self.assertEqual(len(findings), 2)  # root + alice
+        self.assertTrue(all(f.status == Status.PASSED for f in findings))
+
+    def test_root_mfa_disabled(self):
+        self.client.get_account_summary.return_value = {
+            "SummaryMap": {"AccountMFAEnabled": 0}
+        }
+        self.check.context = {"users": []}
+        findings = self.check.execute()
+        self.assertEqual(findings[0].status, Status.FAILED)
+        self.assertIn("root", findings[0].issue.lower())
+
+    def test_user_without_mfa(self):
+        self.client.get_account_summary.return_value = {
+            "SummaryMap": {"AccountMFAEnabled": 1}
+        }
+        self.check.context = {"users": [{"UserName": "bob"}]}
+        self.client.list_mfa_devices.return_value = {"MFADevices": []}
+        findings = self.check.execute()
+        self.assertEqual(len(findings), 2)
+        self.assertEqual(findings[0].status, Status.PASSED)   # root
+        self.assertEqual(findings[1].status, Status.FAILED)    # bob
+
+
+class TestIAMOverlyPermissivePoliciesCheck(unittest.TestCase):
+    """Tests for IAMOverlyPermissivePoliciesCheck."""
+
+    def setUp(self):
+        self.client = MagicMock()
+        self.check = IAMOverlyPermissivePoliciesCheck(client=self.client, region="us-east-1")
+
+    def _mock_paginator(self, policies):
+        paginator = MagicMock()
+        paginator.paginate.return_value = [{"Policies": policies}]
+        self.client.get_paginator.return_value = paginator
+
+    def test_no_admin_policy(self):
+        self._mock_paginator([{
+            "Arn": "arn:aws:iam::123:policy/safe",
+            "PolicyName": "SafePolicy",
+            "DefaultVersionId": "v1",
+            "AttachmentCount": 1,
+        }])
+        self.client.get_policy_version.return_value = {
+            "PolicyVersion": {
+                "Document": {
+                    "Statement": [
+                        {"Effect": "Allow", "Action": "s3:GetObject", "Resource": "*"}
+                    ]
+                }
+            }
+        }
+        findings = self.check.execute()
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].status, Status.PASSED)
+
+    def test_admin_policy(self):
+        self._mock_paginator([{
+            "Arn": "arn:aws:iam::123:policy/admin",
+            "PolicyName": "AdminPolicy",
+            "DefaultVersionId": "v1",
+            "AttachmentCount": 2,
+        }])
+        self.client.get_policy_version.return_value = {
+            "PolicyVersion": {
+                "Document": {
+                    "Statement": [
+                        {"Effect": "Allow", "Action": "*", "Resource": "*"}
+                    ]
+                }
+            }
+        }
+        findings = self.check.execute()
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].status, Status.FAILED)
+        self.assertIn("*:*", findings[0].issue)
+
+    def test_no_attached_policies(self):
+        self._mock_paginator([])
+        findings = self.check.execute()
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].status, Status.PASSED)
+
+
+class TestIAMPasswordPolicyCheck(unittest.TestCase):
+    """Tests for IAMPasswordPolicyCheck."""
+
+    def setUp(self):
+        self.client = MagicMock()
+        self.check = IAMPasswordPolicyCheck(client=self.client, region="us-east-1")
+
+    def test_strong_password_policy(self):
+        self.client.get_account_password_policy.return_value = {
+            "PasswordPolicy": {
+                "MinimumPasswordLength": 14,
+                "RequireUppercaseCharacters": True,
+                "RequireLowercaseCharacters": True,
+                "RequireNumbers": True,
+                "RequireSymbols": True,
+                "MaxPasswordAge": 90,
+            }
+        }
+        findings = self.check.execute()
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].status, Status.PASSED)
+
+    def test_weak_password_policy(self):
+        self.client.get_account_password_policy.return_value = {
+            "PasswordPolicy": {
+                "MinimumPasswordLength": 8,
+                "RequireUppercaseCharacters": False,
+                "RequireLowercaseCharacters": True,
+                "RequireNumbers": False,
+                "RequireSymbols": False,
+                "MaxPasswordAge": 0,
+            }
+        }
+        findings = self.check.execute()
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].status, Status.FAILED)
+        self.assertIn("minimum length is 8", findings[0].issue)
+
+    def test_no_password_policy(self):
+        self.client.get_account_password_policy.side_effect = make_client_error(
+            "NoSuchEntity", "The Password Policy with domain name not found."
+        )
+        findings = self.check.execute()
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].status, Status.FAILED)
+        self.assertIn("No custom password policy", findings[0].issue)
+
+
+class TestIAMStaleAccessKeysCheck(unittest.TestCase):
+    """Tests for IAMStaleAccessKeysCheck."""
+
+    def setUp(self):
+        self.client = MagicMock()
+        self.check = IAMStaleAccessKeysCheck(client=self.client, region="us-east-1")
+
+    def test_fresh_key(self):
+        from datetime import datetime, timezone, timedelta
+        self.check.context = {"users": [{"UserName": "alice"}]}
+        self.client.list_access_keys.return_value = {
+            "AccessKeyMetadata": [{
+                "AccessKeyId": "AKIAI44QH8DHBEXAMPLE",
+                "Status": "Active",
+                "CreateDate": datetime.now(timezone.utc) - timedelta(days=30),
+            }]
+        }
+        findings = self.check.execute()
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].status, Status.PASSED)
+
+    def test_stale_key(self):
+        from datetime import datetime, timezone, timedelta
+        self.check.context = {"users": [{"UserName": "bob"}]}
+        self.client.list_access_keys.return_value = {
+            "AccessKeyMetadata": [{
+                "AccessKeyId": "AKIAI44QH8DHBSTALE",
+                "Status": "Active",
+                "CreateDate": datetime.now(timezone.utc) - timedelta(days=120),
+            }]
+        }
+        findings = self.check.execute()
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].status, Status.FAILED)
+        self.assertIn("120 days old", findings[0].issue)
+
+    def test_no_active_keys(self):
+        from datetime import datetime, timezone
+        self.check.context = {"users": [{"UserName": "carol"}]}
+        self.client.list_access_keys.return_value = {
+            "AccessKeyMetadata": [{
+                "AccessKeyId": "AKIAI44QH8DHINACTIVE",
+                "Status": "Inactive",
+                "CreateDate": datetime.now(timezone.utc),
+            }]
+        }
+        findings = self.check.execute()
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].status, Status.PASSED)
+        self.assertIn("no active access keys", findings[0].issue.lower())
+
+    def test_no_users(self):
+        self.check.context = {"users": []}
+        findings = self.check.execute()
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].status, Status.PASSED)
 
 
 # =====================================================================

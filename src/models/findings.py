@@ -17,12 +17,18 @@ class Severity(str, Enum):
     MEDIUM = "MEDIUM"
     LOW = "LOW"
 
+    def __str__(self):
+        return self.value
+
 
 class Status(str, Enum):
     """Status values for check results."""
     PASSED = "PASSED"
     FAILED = "FAILED"
     ERROR = "ERROR"
+
+    def __str__(self):
+        return self.value
 
 
 @dataclass

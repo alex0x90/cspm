@@ -13,6 +13,7 @@ from src.utils.aws_client import get_client, validate_credentials
 from src.checks.s3_checks import S3_CHECKS
 from src.checks.rds_checks import RDS_CHECKS
 from src.checks.ec2_checks import EC2_CHECKS
+from src.checks.iam_checks import IAM_CHECKS
 
 
 # Map service names to their check registries and required boto3 client names
@@ -28,6 +29,10 @@ SERVICE_REGISTRY = {
     "ec2": {
         "checks": EC2_CHECKS,
         "client_service": "ec2",
+    },
+    "iam": {
+        "checks": IAM_CHECKS,
+        "client_service": "iam",
     },
 }
 
@@ -124,6 +129,12 @@ class SecurityDetector:
             context = {}
             if service_name == "s3":
                 context["buckets"] = client.list_buckets().get("Buckets", [])
+            elif service_name == "iam":
+                users = []
+                paginator = client.get_paginator("list_users")
+                for page in paginator.paginate():
+                    users.extend(page.get("Users", []))
+                context["users"] = users
 
             for check_class in service_config["checks"]:
                 check_instance = check_class(client=client, region=self.region, context=context)
@@ -158,6 +169,12 @@ class SecurityDetector:
                     context = {}
                     if service_name == "s3":
                         context["buckets"] = client.list_buckets().get("Buckets", [])
+                    elif service_name == "iam":
+                        users = []
+                        paginator = client.get_paginator("list_users")
+                        for page in paginator.paginate():
+                            users.extend(page.get("Users", []))
+                        context["users"] = users
 
                     check_instance = check_class(client=client, region=self.region, context=context)
                     results = check_instance.execute()

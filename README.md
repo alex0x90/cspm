@@ -21,16 +21,16 @@ A Python-based Cloud Security Posture Management tool that scans AWS services fo
                         ┌───────────────────┐
                         │   detector.py     │
                         │   Orchestrator    │
-                        └──┬──────┬──────┬──┘
-                           │      │      │
-              ┌────────────┘      │      └────────────┐
-              ▼                   ▼                    ▼
-     ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
-     │  S3 Checks   │   │  RDS Checks  │   │  EC2 Checks  │
-     │  (9 rules)   │   │  (5 rules)   │   │  (5 rules)   │
-     └──────┬───────┘   └──────┬───────┘   └──────┬───────┘
-            │                  │                   │
-            └──────────────────┼───────────────────┘
+                        └─┬────┬────┬────┬─┘
+                          │    │    │    │
+            ┌─────────────┘    │    │    └─────────────┐
+            ▼                  ▼    ▼                   ▼
+   ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+   │  S3 Checks   │ │  RDS Checks  │ │  EC2 Checks  │ │  IAM Checks  │
+   │  (9 rules)   │ │  (5 rules)   │ │  (5 rules)   │ │  (5 rules)   │
+   └──────┬───────┘ └──────┬───────┘ └──────┬───────┘ └──────┬───────┘
+          │                │                │                │
+          └────────────────┼────────────────┼────────────────┘
                                │
                                ▼
                       ┌─────────────────┐
@@ -49,7 +49,7 @@ A Python-based Cloud Security Posture Management tool that scans AWS services fo
                               ▼              ▼
                      ┌──────────────┐ ┌────────────┐
                      │  AWS Cloud   │ │  JSON/Text │
-                     │  S3/RDS/EC2  │ │  Report    │
+                     │S3/RDS/EC2/IAM│ │  Report    │
                      └──────────────┘ └────────────┘
 ```
 
@@ -76,7 +76,8 @@ cspm/
 │   │   ├── constants.py          # Shared constants (ports, engine versions)
 │   │   ├── s3_checks.py          # 9 S3 security checks
 │   │   ├── rds_checks.py         # 5 RDS security checks
-│   │   └── ec2_checks.py         # 5 EC2 security checks
+│   │   ├── ec2_checks.py         # 5 EC2 security checks
+│   │   └── iam_checks.py         # 5 IAM security checks
 │   ├── models/
 │   │   └── findings.py           # Finding & ScanReport dataclasses, Severity/Status enums
 │   └── utils/
@@ -84,10 +85,13 @@ cspm/
 │       ├── error_handler.py      # AWS error parsing & classification
 │       └── formatter.py          # JSON & plain text report formatters
 ├── research/
-│   └── misconfigurations.md      # Detailed research on 19 misconfigurations
+│   ├── s3_misconfigurations.md   # S3 security research (9 checks)
+│   ├── rds_misconfigurations.md  # RDS security research (5 checks)
+│   ├── ec2_misconfigurations.md  # EC2 security research (5 checks)
+│   └── iam_misconfigurations.md  # IAM security research (5 checks)
 ├── reports/                      # Generated scan reports (JSON)
 └── tests/
-    └── test_checks.py            # 42 unit tests with mocked Boto3 responses
+    └── test_checks.py            # 56 unit tests with mocked Boto3 responses
 ```
 
 ## Prerequisites
@@ -99,6 +103,7 @@ cspm/
   - `s3control:GetPublicAccessBlock` (account-level public access block)
   - `rds:DescribeDBInstances`
   - `ec2:DescribeSecurityGroups`, `ec2:DescribeVolumes`, `ec2:DescribeInstances`, `ec2:DescribeKeyPairs`
+  - `iam:GetAccountSummary`, `iam:ListUsers`, `iam:ListMFADevices`, `iam:ListPolicies`, `iam:GetPolicyVersion`, `iam:GetAccountPasswordPolicy`, `iam:ListAccessKeys`
   - `sts:GetCallerIdentity`
 
 ## Installation
@@ -149,6 +154,7 @@ python -m src.main --service all --region us-east-1
 python -m src.main --service s3 --region us-east-1
 python -m src.main --service rds --region us-west-2
 python -m src.main --service ec2 --region eu-west-1
+python -m src.main --service iam --region us-east-1
 ```
 
 ### Run a specific check
@@ -178,7 +184,7 @@ python -m src.main --service all --region us-east-1 --profile my-profile
 
 | Argument        | Default      | Description                                      |
 |-----------------|--------------|--------------------------------------------------|
-| `--service`     | `all`        | Service to scan: `s3`, `rds`, `ec2`, or `all`   |
+| `--service`     | `all`        | Service to scan: `s3`, `rds`, `ec2`, `iam`, or `all` |
 | `--region`      | `us-east-1`  | AWS region to scan                               |
 | `--check`       | *(all)*      | Run a specific check by ID (e.g., `S3-001`)      |
 | `--output`      | `json`       | Output format: `json` or `text`                  |
@@ -228,6 +234,16 @@ python -m src.main --service all --region us-east-1 --profile my-profile
 | EC2-003 | Public IP Assignment   | MEDIUM   | Instances with public IPv4 addresses                     |
 | EC2-004 | IAM Instance Profile   | MEDIUM   | Instances without an IAM role attached                   |
 | EC2-005 | Key Pair Usage         | LOW      | Unused/orphaned key pairs                                |
+
+### IAM Checks (5)
+
+| ID      | Check                    | Severity | What It Detects                                          |
+|---------|--------------------------|----------|----------------------------------------------------------|
+| IAM-001 | Root Account Access Keys | HIGH     | Root account has active access keys                      |
+| IAM-002 | MFA Enabled              | HIGH     | IAM users or root without MFA enabled                    |
+| IAM-003 | Overly Permissive Policies| HIGH    | Customer-managed policies with full admin access (*:*)   |
+| IAM-004 | Password Policy          | MEDIUM   | Weak or missing account password policy                  |
+| IAM-005 | Stale Access Keys        | MEDIUM   | Active access keys older than 90 days                    |
 
 ## Example Output (JSON Report)
 
@@ -285,12 +301,15 @@ python -m unittest tests.test_checks -v
 ```
 
 ```
-Ran 42 tests in 0.047s
+Ran 56 tests in 0.050s
 OK
 ```
 
 ## Research
 
-The full security research document with 19 misconfigurations (9 for S3, 5 for RDS, 5 for EC2), including attack scenarios and step-by-step remediation, is available at:
+Detailed security research documents with attack scenarios and step-by-step remediation for each service:
 
-[research/misconfigurations.md](research/misconfigurations.md)
+- [research/s3_misconfigurations.md](research/s3_misconfigurations.md) — 9 S3 checks
+- [research/rds_misconfigurations.md](research/rds_misconfigurations.md) — 5 RDS checks
+- [research/ec2_misconfigurations.md](research/ec2_misconfigurations.md) — 5 EC2 checks
+- [research/iam_misconfigurations.md](research/iam_misconfigurations.md) — 5 IAM checks
