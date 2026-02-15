@@ -56,6 +56,14 @@ class S3PublicAccessCheck(BaseCheck):
             "'s3-bucket-public-write-prohibited' to monitor."
         )
 
+    def get_impact(self) -> str:
+        return (
+            "Publicly accessible S3 buckets can lead to unauthorized data access, "
+            "data exfiltration, data tampering, or hosting of malicious content. "
+            "Attackers can read sensitive files (PII, credentials, backups) or write "
+            "malicious objects. This is one of the most common causes of cloud data breaches."
+        )
+
     def get_finding_id(self) -> str:
         return "S3-001"
 
@@ -115,6 +123,7 @@ class S3PublicAccessCheck(BaseCheck):
                         description=self.get_description(),
                         finding=f"Bucket '{bucket_name}' has public access via: {', '.join(sources)}.",
                         remediation=self.get_remediation(),
+                        impact=self.get_impact(),
                         resource_id=bucket_name,
                         region=self.region,
                     ))
@@ -191,6 +200,15 @@ class S3EncryptionCheck(BaseCheck):
             "7. Re-encrypt existing unencrypted objects using S3 Batch Operations."
         )
 
+    def get_impact(self) -> str:
+        return (
+            "Without server-side encryption (or with only SSE-S3), data at rest lacks "
+            "customer-controlled key management and detailed audit trails. SSE-KMS provides "
+            "envelope encryption with CloudTrail logging of every key usage, enabling detection "
+            "of unauthorized access. Without it, compromised storage could expose plaintext data "
+            "with no visibility into who accessed it."
+        )
+
     def get_finding_id(self) -> str:
         return "S3-002"
 
@@ -257,6 +275,7 @@ class S3EncryptionCheck(BaseCheck):
                         description=self.get_description(),
                         finding=f"Bucket '{bucket_name}' does not have default encryption enabled.",
                         remediation=self.get_remediation(),
+                        impact=self.get_impact(),
                         resource_id=bucket_name,
                         region=self.region,
                     ))
@@ -271,6 +290,7 @@ class S3EncryptionCheck(BaseCheck):
                         description=self.get_description(),
                         finding=f"Bucket '{bucket_name}' does not have default encryption enabled.",
                         remediation=self.get_remediation(),
+                        impact=self.get_impact(),
                         resource_id=bucket_name,
                         region=self.region,
                     ))
@@ -333,6 +353,14 @@ class S3VersioningCheck(BaseCheck):
             "6. Note: Versioning cannot be disabled once enabled, only suspended."
         )
 
+    def get_impact(self) -> str:
+        return (
+            "Without versioning, accidental or malicious deletion of objects is permanent "
+            "and unrecoverable. Versioning protects against ransomware attacks (where attackers "
+            "overwrite files with encrypted copies), application bugs that corrupt data, and "
+            "human errors. It also enables point-in-time recovery of any object."
+        )
+
     def get_finding_id(self) -> str:
         return "S3-003"
 
@@ -370,6 +398,7 @@ class S3VersioningCheck(BaseCheck):
                         description=self.get_description(),
                         finding=f"Bucket '{bucket_name}' does not have versioning enabled (Status: {status}).",
                         remediation=self.get_remediation(),
+                        impact=self.get_impact(),
                         resource_id=bucket_name,
                         region=self.region,
                     ))
@@ -434,6 +463,14 @@ class S3PublicAccessBlockCheck(BaseCheck):
             "5. Use AWS Config rule 's3-account-level-public-access-blocks' to enforce."
         )
 
+    def get_impact(self) -> str:
+        return (
+            "Without all four Block Public Access settings enabled, S3 buckets are vulnerable "
+            "to accidental public exposure through misconfigured bucket policies or ACLs. "
+            "A single misconfigured policy or ACL could expose all bucket contents to the internet, "
+            "leading to data breaches. Block Public Access acts as a safety net against human error."
+        )
+
     def get_finding_id(self) -> str:
         return "S3-004"
 
@@ -484,6 +521,7 @@ class S3PublicAccessBlockCheck(BaseCheck):
                         description=self.get_description(),
                         finding=f"Bucket '{bucket_name}' has disabled Public Access Block settings: {', '.join(disabled)}.",
                         remediation=self.get_remediation(),
+                        impact=self.get_impact(),
                         resource_id=bucket_name,
                         region=self.region,
                     ))
@@ -498,6 +536,7 @@ class S3PublicAccessBlockCheck(BaseCheck):
                         description=self.get_description(),
                         finding=f"Bucket '{bucket_name}' has no Public Access Block configuration.",
                         remediation=self.get_remediation(),
+                        impact=self.get_impact(),
                         resource_id=bucket_name,
                         region=self.region,
                     ))
@@ -559,6 +598,14 @@ class S3LoggingCheck(BaseCheck):
             "6. Set up lifecycle policies on the logging bucket to manage log retention."
         )
 
+    def get_impact(self) -> str:
+        return (
+            "Without server access logging, there is no record of who accessed the bucket, "
+            "what operations were performed, or when. This makes it impossible to detect "
+            "unauthorized access, investigate security incidents, or meet compliance audit "
+            "requirements (PCI DSS, HIPAA, SOC 2). Attackers can exfiltrate data undetected."
+        )
+
     def get_finding_id(self) -> str:
         return "S3-005"
 
@@ -593,6 +640,7 @@ class S3LoggingCheck(BaseCheck):
                         description=self.get_description(),
                         finding=f"Bucket '{bucket_name}' does not have server access logging enabled.",
                         remediation=self.get_remediation(),
+                        impact=self.get_impact(),
                         resource_id=bucket_name,
                         region=self.region,
                     ))
@@ -658,6 +706,15 @@ class S3TransitEncryptionCheck(BaseCheck):
             "4. This ensures all data in transit is encrypted via TLS/HTTPS."
         )
 
+    def get_impact(self) -> str:
+        return (
+            "Without enforced HTTPS, data transferred to/from S3 can be intercepted via "
+            "man-in-the-middle (MITM) attacks on unencrypted HTTP connections. Attackers on "
+            "the same network can capture sensitive data (credentials, PII, application data) "
+            "in plaintext. This violates encryption-in-transit requirements of PCI DSS, HIPAA, "
+            "and most security frameworks."
+        )
+
     def get_finding_id(self) -> str:
         return "S3-006"
 
@@ -708,6 +765,7 @@ class S3TransitEncryptionCheck(BaseCheck):
                         description=self.get_description(),
                         finding=f"Bucket '{bucket_name}' does not enforce HTTPS-only access. Data in transit may be unencrypted.",
                         remediation=self.get_remediation(),
+                        impact=self.get_impact(),
                         resource_id=bucket_name,
                         region=self.region,
                     ))
@@ -773,6 +831,15 @@ class S3MFADeleteCheck(BaseCheck):
             "5. Note: Only the bucket owner (root account) can enable MFA Delete."
         )
 
+    def get_impact(self) -> str:
+        return (
+            "Without MFA Delete, an attacker who compromises IAM credentials can suspend "
+            "versioning and permanently delete all object versions, making data unrecoverable. "
+            "This is a key ransomware attack vector — attackers disable versioning, encrypt "
+            "files with their own KMS key, and demand payment. MFA Delete requires physical "
+            "MFA device access to change versioning state."
+        )
+
     def get_finding_id(self) -> str:
         return "S3-007"
 
@@ -813,6 +880,7 @@ class S3MFADeleteCheck(BaseCheck):
                             "is not enabled. Versioning could be suspended by compromised credentials."
                         ),
                         remediation=self.get_remediation(),
+                        impact=self.get_impact(),
                         resource_id=bucket_name,
                         region=self.region,
                     ))
@@ -877,6 +945,15 @@ class S3ObjectLockCheck(BaseCheck):
             "   - Compliance Mode: Protects indefinitely (cannot be overridden).\n"
             "4. Migrate existing objects to the new bucket using S3 Batch Operations.\n"
             "5. Object Lock requires versioning to be enabled (automatically enabled)."
+        )
+
+    def get_impact(self) -> str:
+        return (
+            "Without Object Lock, even a compromised root account or bucket owner can delete "
+            "or overwrite objects. Object Lock provides immutability (WORM) that protects "
+            "against ransomware, insider threats, and accidental deletion. In Compliance Mode, "
+            "no one — including AWS — can delete protected objects before the retention period expires. "
+            "Required for regulatory compliance in financial services and healthcare."
         )
 
     def get_finding_id(self) -> str:
@@ -1002,6 +1079,15 @@ class S3AccountPublicAccessBlockCheck(BaseCheck):
             "3. Or use CLI: aws s3control put-public-access-block --account-id ACCOUNT_ID "
             "--public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,"
             "BlockPublicPolicy=true,RestrictPublicBuckets=true"
+        )
+
+    def get_impact(self) -> str:
+        return (
+            "Without account-level Block Public Access, any new or existing bucket in the account "
+            "can be made public through a misconfigured policy or ACL. This is a defense-in-depth "
+            "control — even if individual bucket settings are correct today, a future misconfiguration "
+            "could expose data. Account-level blocking overrides all bucket-level settings, preventing "
+            "accidental public exposure across the entire account."
         )
 
     def get_finding_id(self) -> str:
