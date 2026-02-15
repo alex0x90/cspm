@@ -3,7 +3,10 @@ Base Check Module
 
 Abstract base class that all security checks inherit from.
 Provides the template method pattern for executing checks
-with consistent error handling.
+with consistent error handling and a helper for building findings.
+
+Subclasses define check metadata as class-level attributes and
+implement check() for the actual security logic.
 """
 
 from abc import ABC, abstractmethod
@@ -17,61 +20,69 @@ class BaseCheck(ABC):
     """
     Abstract base class for all security checks.
 
-    Subclasses must implement:
-        - check(): Perform the actual security check.
-        - get_severity(): Return the severity level (HIGH/MEDIUM/LOW).
-        - get_description(): Return a description of what is being checked.
-        - get_remediation(): Return step-by-step remediation guidance.
-        - get_finding_id(): Return a unique identifier for this check type.
+    Subclasses must define these class attributes:
+        check_name  (str):       Human-readable name of the check.
+        service     (str):       AWS service being checked (e.g., 's3').
+        severity    (str):       Severity level (Severity.HIGH / MEDIUM / LOW).
+        finding_id  (str):       Unique identifier (e.g., 'S3-001').
+        description (str):       What this check verifies.
+        impact      (str):       Security impact if not addressed.
+        remediation (List[str]): Step-by-step remediation guidance.
 
-    Attributes:
-        check_name: Human-readable name of the check.
-        service: AWS service being checked (e.g., 's3', 'rds', 'ec2').
-        region: AWS region being checked.
+    Subclasses must implement:
+        check() -> List[Finding]: Perform the actual security check.
     """
 
-    def __init__(self, client, region=""):
+    # Sentinel values — subclasses must override all of these.
+    check_name: str = NotImplemented
+    service: str = NotImplemented
+    severity: str = NotImplemented
+    finding_id: str = NotImplemented
+    description: str = NotImplemented
+    impact: str = NotImplemented
+    remediation: List[str] = NotImplemented
+
+    def __init__(self, client, region="", context=None):
         """
         Initialize the check with an AWS client.
 
         Args:
             client: A boto3 client for the relevant AWS service.
             region: The AWS region being checked.
+            context: Optional shared data dict (e.g., pre-fetched bucket list).
         """
         self.client = client
         self.region = region
+        self.context = context or {}
 
-    @property
-    @abstractmethod
-    def check_name(self) -> str:
-        """Human-readable name of the check."""
-        pass
+    # ------------------------------------------------------------------
+    # Finding helpers — eliminates boilerplate in every check class
+    # ------------------------------------------------------------------
 
-    @property
-    @abstractmethod
-    def service(self) -> str:
-        """AWS service being checked."""
-        pass
+    def _make_finding(self, status, issue="", resource_id="", error_message=""):
+        """
+        Build a Finding with common fields auto-populated from class metadata.
 
-    @abstractmethod
-    def get_severity(self) -> str:
-        """Return the severity level: HIGH, MEDIUM, or LOW."""
-        pass
+        Remediation and impact are included automatically for FAILED findings.
+        Impact is also included for ERROR findings.
+        """
+        return Finding(
+            check_id=self.finding_id,
+            check_name=self.check_name,
+            severity=self.severity,
+            status=status,
+            description=self.description,
+            issue=issue,
+            remediation=self.remediation if status == Status.FAILED else [],
+            impact=self.impact if status in (Status.FAILED, Status.ERROR) else "",
+            resource_id=resource_id,
+            region=self.region,
+            error_message=error_message,
+        )
 
-    @abstractmethod
-    def get_description(self) -> str:
-        """Return a description of what this check verifies."""
-        pass
-
-    @abstractmethod
-    def get_remediation(self) -> str:
-        """Return step-by-step remediation guidance."""
-        pass
-
-    @abstractmethod
-    def get_finding_id(self) -> str:
-        """Return a unique identifier for this check type."""
-        pass
+    # ------------------------------------------------------------------
+    # Abstract check method
+    # ------------------------------------------------------------------
 
     @abstractmethod
     def check(self) -> List[Finding]:
@@ -82,6 +93,10 @@ class BaseCheck(ABC):
             List[Finding]: A list of Finding objects, one per resource checked.
         """
         pass
+
+    # ------------------------------------------------------------------
+    # Template method with error handling
+    # ------------------------------------------------------------------
 
     def execute(self) -> List[Finding]:
         """
@@ -97,18 +112,8 @@ class BaseCheck(ABC):
             return self.check()
         except Exception as e:
             error_info = handle_aws_error(e)
-            return [
-                Finding(
-                    check_id=self.get_finding_id(),
-                    check_name=self.check_name,
-                    severity=self.get_severity(),
-                    status=Status.ERROR,
-                    description=self.get_description(),
-                    finding="",
-                    remediation="",
-                    resource_id="N/A",
-                    region=self.region,
-                    error_message=error_info["message"],
-                )
-            ]
-
+            return [self._make_finding(
+                Status.ERROR,
+                resource_id="N/A",
+                error_message=error_info["message"],
+            )]

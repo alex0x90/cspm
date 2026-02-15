@@ -7,17 +7,18 @@ individual findings, and scan reports.
 
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
-from typing import List, Optional
+from enum import Enum
+from typing import List
 
 
-class Severity:
+class Severity(str, Enum):
     """Severity levels for findings."""
     HIGH = "HIGH"
     MEDIUM = "MEDIUM"
     LOW = "LOW"
 
 
-class Status:
+class Status(str, Enum):
     """Status values for check results."""
     PASSED = "PASSED"
     FAILED = "FAILED"
@@ -35,8 +36,9 @@ class Finding:
         severity: HIGH, MEDIUM, or LOW.
         status: PASSED, FAILED, or ERROR.
         description: What was checked.
-        finding: What was found (if failed).
-        remediation: Step-by-step remediation guidance.
+        issue: What was found (details of the misconfiguration).
+        remediation: Step-by-step remediation guidance (list of steps).
+        impact: Potential security impact if not addressed.
         resource_id: AWS resource identifier (if applicable).
         region: AWS region (if applicable).
         error_message: Error details (if ERROR status).
@@ -46,8 +48,9 @@ class Finding:
     severity: str
     status: str
     description: str
-    finding: str = ""
-    remediation: str = ""
+    issue: str = ""
+    remediation: List[str] = field(default_factory=list)
+    impact: str = ""
     resource_id: str = ""
     region: str = ""
     error_message: str = ""
@@ -118,4 +121,3 @@ class ScanReport:
             "summary": self.get_summary(),
             "findings": [f.to_dict() for f in self.findings],
         }
-

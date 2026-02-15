@@ -72,26 +72,36 @@ class SecurityDetector:
 
     def get_checks_info(self):
         """
-        Return a list of all checks that will be run, grouped by service.
+        Return metadata for all checks that will be run, grouped by service.
+        Reads class-level attributes directly — no instantiation needed.
 
         Returns:
-            dict: {service_name: [(check_id, check_name, severity, description), ...]}
+            dict: {service_name: [(finding_id, check_name, severity, description), ...]}
         """
         info = {}
         for service_name in self.services:
             service_config = SERVICE_REGISTRY[service_name]
-            # Use a dummy client (None) just to read metadata
             checks_list = []
             for check_class in service_config["checks"]:
-                instance = check_class(client=None, region=self.region)
                 checks_list.append((
-                    instance.get_finding_id(),
-                    instance.check_name,
-                    instance.get_severity(),
-                    instance.get_description(),
+                    check_class.finding_id,
+                    check_class.check_name,
+                    check_class.severity,
+                    check_class.description,
                 ))
             info[service_name] = checks_list
         return info
+
+    def _build_report(self) -> ScanReport:
+        """Build a ScanReport from the current findings and identity."""
+        return ScanReport(
+            scan_date=datetime.utcnow().isoformat(),
+            services=self.services,
+            region=self.region,
+            findings=self.findings,
+            account_id=self.identity.get("account", "N/A") if self.identity else "N/A",
+            account_arn=self.identity.get("arn", "N/A") if self.identity else "N/A",
+        )
 
     def run_all_checks(self) -> ScanReport:
         """
@@ -110,21 +120,17 @@ class SecurityDetector:
                 region=self.region,
             )
 
+            # Pre-fetch shared data to avoid redundant API calls
+            context = {}
+            if service_name == "s3":
+                context["buckets"] = client.list_buckets().get("Buckets", [])
+
             for check_class in service_config["checks"]:
-                check_instance = check_class(client=client, region=self.region)
+                check_instance = check_class(client=client, region=self.region, context=context)
                 results = check_instance.execute()
                 self.findings.extend(results)
 
-        report = ScanReport(
-            scan_date=datetime.utcnow().isoformat(),
-            services=self.services,
-            region=self.region,
-            findings=self.findings,
-            account_id=self.identity.get("account", "N/A") if self.identity else "N/A",
-            account_arn=self.identity.get("arn", "N/A") if self.identity else "N/A",
-        )
-
-        return report
+        return self._build_report()
 
     def run_specific_check(self, check_id: str) -> ScanReport:
         """
@@ -140,27 +146,21 @@ class SecurityDetector:
 
         for service_name in self.services:
             service_config = SERVICE_REGISTRY[service_name]
-            client = get_client(
-                service_config["client_service"],
-                profile=self.profile,
-                region=self.region,
-            )
 
             for check_class in service_config["checks"]:
-                # Create a temporary instance to check the finding ID
-                temp_instance = check_class(client=client, region=self.region)
-                if temp_instance.get_finding_id() == check_id.upper():
-                    results = temp_instance.execute()
+                if check_class.finding_id == check_id.upper():
+                    client = get_client(
+                        service_config["client_service"],
+                        profile=self.profile,
+                        region=self.region,
+                    )
+                    # Pre-fetch shared data
+                    context = {}
+                    if service_name == "s3":
+                        context["buckets"] = client.list_buckets().get("Buckets", [])
+
+                    check_instance = check_class(client=client, region=self.region, context=context)
+                    results = check_instance.execute()
                     self.findings.extend(results)
 
-        report = ScanReport(
-            scan_date=datetime.utcnow().isoformat(),
-            services=self.services,
-            region=self.region,
-            findings=self.findings,
-            account_id=self.identity.get("account", "N/A") if self.identity else "N/A",
-            account_arn=self.identity.get("arn", "N/A") if self.identity else "N/A",
-        )
-
-        return report
-
+        return self._build_report()

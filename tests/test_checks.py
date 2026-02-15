@@ -92,7 +92,7 @@ class TestS3PublicAccessCheck(unittest.TestCase):
         findings = self.check.execute()
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0].status, Status.FAILED)
-        self.assertIn("bucket policy", findings[0].finding)
+        self.assertIn("bucket policy", findings[0].issue)
 
     def test_bucket_public_via_acl(self):
         self.client.list_buckets.return_value = {"Buckets": [{"Name": "acl-bucket"}]}
@@ -111,7 +111,7 @@ class TestS3PublicAccessCheck(unittest.TestCase):
         findings = self.check.execute()
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0].status, Status.FAILED)
-        self.assertIn("ACL", findings[0].finding)
+        self.assertIn("ACL", findings[0].issue)
 
 
 class TestS3EncryptionCheck(unittest.TestCase):
@@ -407,7 +407,7 @@ class TestEC2OpenPortsCheck(unittest.TestCase):
         }])
         findings = self.check.execute()
         self.assertEqual(findings[0].status, Status.FAILED)
-        self.assertIn("22 (SSH)", findings[0].finding)
+        self.assertIn("22 (SSH)", findings[0].issue)
 
     def test_multiple_sensitive_ports_open(self):
         self._mock_paginator([{
@@ -425,8 +425,8 @@ class TestEC2OpenPortsCheck(unittest.TestCase):
         }])
         findings = self.check.execute()
         self.assertEqual(findings[0].status, Status.FAILED)
-        self.assertIn("SSH", findings[0].finding)
-        self.assertIn("RDP", findings[0].finding)
+        self.assertIn("SSH", findings[0].issue)
+        self.assertIn("RDP", findings[0].issue)
 
 
 class TestEC2UnencryptedEBSCheck(unittest.TestCase):
@@ -495,7 +495,7 @@ class TestEC2PublicIPCheck(unittest.TestCase):
         }])
         findings = self.check.execute()
         self.assertEqual(findings[0].status, Status.FAILED)
-        self.assertIn("54.1.2.3", findings[0].finding)
+        self.assertIn("54.1.2.3", findings[0].issue)
 
 
 class TestEC2IAMRoleCheck(unittest.TestCase):
@@ -611,8 +611,8 @@ class TestFindingsModel(unittest.TestCase):
             severity=Severity.HIGH,
             status=Status.FAILED,
             description="Test description",
-            finding="Test finding",
-            remediation="Fix it",
+            issue="Test issue",
+            remediation=["Fix step 1", "Fix step 2"],
             resource_id="resource-123",
             region="us-east-1",
         )
@@ -620,6 +620,8 @@ class TestFindingsModel(unittest.TestCase):
         self.assertEqual(d["check_id"], "TEST-001")
         self.assertEqual(d["severity"], "HIGH")
         self.assertEqual(d["status"], "FAILED")
+        self.assertEqual(d["issue"], "Test issue")
+        self.assertIsInstance(d["remediation"], list)
 
     def test_scan_report_summary(self):
         report = ScanReport(
@@ -658,8 +660,8 @@ class TestFormatter(unittest.TestCase):
                     severity=Severity.HIGH,
                     status=Status.FAILED,
                     description="Check public access",
-                    finding="Bucket is public",
-                    remediation="Block public access",
+                    issue="Bucket is public",
+                    remediation=["Block public access"],
                     resource_id="my-bucket",
                     region="us-east-1",
                 ),
@@ -713,4 +715,3 @@ class TestBaseCheckErrorHandling(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

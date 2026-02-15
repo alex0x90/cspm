@@ -24,7 +24,6 @@ REPORTS_DIR = os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__
 from config.aws_config import DEFAULT_REGION
 from src.detector import SecurityDetector
 from src.models.findings import Status
-from src.utils.formatter import format_json, format_text, export_to_file
 
 
 SUPPORTED_SERVICES = ["s3", "rds", "ec2", "all"]
@@ -162,13 +161,13 @@ def main(argv=None):
             print()
             print(f"  [{finding.severity}] {finding.check_id} - {finding.check_name}")
             print(f"  Resource: {finding.resource_id}")
-            print(f"  Issue:    {finding.finding}")
+            print(f"  Issue:    {finding.issue}")
             if finding.status == Status.ERROR:
                 print(f"  Error:    {finding.error_message}")
             print()
             print("-" * 60)
 
-        # Generate full JSON report for misconfigurations with remediation
+        # Generate JSON report for misconfigurations with remediation
         misconfig_report = {
             "scan_date": report.scan_date,
             "account_id": report.account_id,
@@ -182,8 +181,10 @@ def main(argv=None):
                 "check_name": finding.check_name,
                 "severity": finding.severity,
                 "resource_id": finding.resource_id,
-                "issue": finding.finding,
-                "remediation": finding.remediation.split("\n") if finding.remediation else [],
+                "description": finding.description,
+                "issue": finding.issue,
+                "impact": finding.impact,
+                "remediation": finding.remediation,
             })
 
         # Write JSON report to reports folder
@@ -214,4 +215,3 @@ def main(argv=None):
 
 if __name__ == "__main__":
     sys.exit(main())
-

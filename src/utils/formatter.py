@@ -74,10 +74,10 @@ def format_text(report: ScanReport) -> str:
             lines.append(f"  Description: {finding.description}")
 
             if finding.status == Status.FAILED:
-                lines.append(f"  Finding:     {finding.finding}")
+                lines.append(f"  Issue:       {finding.issue}")
                 if finding.remediation:
                     lines.append(f"  Remediation:")
-                    for rem_line in finding.remediation.split("\n"):
+                    for rem_line in finding.remediation:
                         lines.append(f"    {rem_line}")
             elif finding.status == Status.ERROR:
                 lines.append(f"  Error:       {finding.error_message}")
@@ -102,4 +102,3 @@ def export_to_file(content: str, filepath: str) -> None:
     """
     with open(filepath, "w") as f:
         f.write(content)
-
