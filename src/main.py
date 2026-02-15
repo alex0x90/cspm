@@ -26,7 +26,7 @@ from src.detector import SecurityDetector
 from src.models.findings import Status
 
 
-SUPPORTED_SERVICES = ["s3", "rds", "ec2", "iam", "all"]
+SUPPORTED_SERVICES = ["s3", "rds", "ec2", "iam", "bedrock", "all"]
 
 
 def parse_args(argv=None):
@@ -96,7 +96,7 @@ def main(argv=None):
 
     # Determine services to scan
     if args.service == "all":
-        services = ["s3", "rds", "ec2", "iam"]
+        services = ["s3", "rds", "ec2", "iam", "bedrock"]
     else:
         services = [args.service]
 

@@ -14,6 +14,7 @@ from src.checks.s3_checks import S3_CHECKS
 from src.checks.rds_checks import RDS_CHECKS
 from src.checks.ec2_checks import EC2_CHECKS
 from src.checks.iam_checks import IAM_CHECKS
+from src.checks.bedrock_checks import BEDROCK_CHECKS
 
 
 # Map service names to their check registries and required boto3 client names
@@ -33,6 +34,10 @@ SERVICE_REGISTRY = {
     "iam": {
         "checks": IAM_CHECKS,
         "client_service": "iam",
+    },
+    "bedrock": {
+        "checks": BEDROCK_CHECKS,
+        "client_service": "bedrock",
     },
 }
 

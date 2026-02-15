@@ -15,9 +15,7 @@ from src.models.findings import Finding, ScanReport, Severity, Status
 from src.checks.s3_checks import (
     S3PublicAccessCheck,
     S3EncryptionCheck,
-    S3VersioningCheck,
     S3PublicAccessBlockCheck,
-    S3LoggingCheck,
 )
 from src.checks.rds_checks import (
     RDSPublicAccessCheck,
@@ -39,6 +37,13 @@ from src.checks.iam_checks import (
     IAMOverlyPermissivePoliciesCheck,
     IAMPasswordPolicyCheck,
     IAMStaleAccessKeysCheck,
+)
+from src.checks.bedrock_checks import (
+    BedrockInvocationLoggingCheck,
+    BedrockGuardrailsCheck,
+    BedrockModelAccessCheck,
+    BedrockCustomModelEncryptionCheck,
+    BedrockVPCEndpointCheck,
 )
 from src.utils.formatter import format_json, format_text
 from src.utils.error_handler import handle_aws_error, is_permission_error, should_retry
@@ -149,26 +154,6 @@ class TestS3EncryptionCheck(unittest.TestCase):
         self.assertEqual(findings[0].status, Status.FAILED)
 
 
-class TestS3VersioningCheck(unittest.TestCase):
-    """Tests for S3VersioningCheck."""
-
-    def setUp(self):
-        self.client = MagicMock()
-        self.check = S3VersioningCheck(client=self.client, region="us-east-1")
-
-    def test_versioning_enabled(self):
-        self.client.list_buckets.return_value = {"Buckets": [{"Name": "v-bucket"}]}
-        self.client.get_bucket_versioning.return_value = {"Status": "Enabled"}
-        findings = self.check.execute()
-        self.assertEqual(findings[0].status, Status.PASSED)
-
-    def test_versioning_disabled(self):
-        self.client.list_buckets.return_value = {"Buckets": [{"Name": "v-bucket"}]}
-        self.client.get_bucket_versioning.return_value = {}
-        findings = self.check.execute()
-        self.assertEqual(findings[0].status, Status.FAILED)
-
-
 class TestS3PublicAccessBlockCheck(unittest.TestCase):
     """Tests for S3PublicAccessBlockCheck."""
 
@@ -207,28 +192,6 @@ class TestS3PublicAccessBlockCheck(unittest.TestCase):
         self.client.get_public_access_block.side_effect = make_client_error(
             "NoSuchPublicAccessBlockConfiguration"
         )
-        findings = self.check.execute()
-        self.assertEqual(findings[0].status, Status.FAILED)
-
-
-class TestS3LoggingCheck(unittest.TestCase):
-    """Tests for S3LoggingCheck."""
-
-    def setUp(self):
-        self.client = MagicMock()
-        self.check = S3LoggingCheck(client=self.client, region="us-east-1")
-
-    def test_logging_enabled(self):
-        self.client.list_buckets.return_value = {"Buckets": [{"Name": "log-bucket"}]}
-        self.client.get_bucket_logging.return_value = {
-            "LoggingEnabled": {"TargetBucket": "log-target"}
-        }
-        findings = self.check.execute()
-        self.assertEqual(findings[0].status, Status.PASSED)
-
-    def test_logging_disabled(self):
-        self.client.list_buckets.return_value = {"Buckets": [{"Name": "nolog-bucket"}]}
-        self.client.get_bucket_logging.return_value = {}
         findings = self.check.execute()
         self.assertEqual(findings[0].status, Status.FAILED)
 
@@ -804,6 +767,214 @@ class TestIAMStaleAccessKeysCheck(unittest.TestCase):
         findings = self.check.execute()
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0].status, Status.PASSED)
+
+
+# =====================================================================
+# Bedrock Check Tests
+# =====================================================================
+
+class TestBedrockInvocationLoggingCheck(unittest.TestCase):
+    """Tests for BedrockInvocationLoggingCheck."""
+
+    def setUp(self):
+        self.client = MagicMock()
+        self.check = BedrockInvocationLoggingCheck(client=self.client, region="us-east-1")
+
+    def test_logging_not_configured(self):
+        self.client.get_model_invocation_logging_configuration.return_value = {}
+        findings = self.check.execute()
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].status, Status.FAILED)
+        self.assertIn("not configured", findings[0].issue)
+
+    def test_logging_no_destination(self):
+        self.client.get_model_invocation_logging_configuration.return_value = {
+            "loggingConfig": {
+                "cloudWatchConfig": {},
+                "s3Config": {},
+                "textDataDeliveryEnabled": True,
+            }
+        }
+        findings = self.check.execute()
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].status, Status.FAILED)
+        self.assertIn("no destination", findings[0].issue.lower())
+
+    def test_logging_enabled_cloudwatch(self):
+        self.client.get_model_invocation_logging_configuration.return_value = {
+            "loggingConfig": {
+                "cloudWatchConfig": {
+                    "logGroupName": "/aws/bedrock/invocations",
+                    "roleArn": "arn:aws:iam::123:role/bedrock-logging",
+                },
+                "s3Config": {},
+                "textDataDeliveryEnabled": True,
+                "imageDataDeliveryEnabled": True,
+            }
+        }
+        findings = self.check.execute()
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].status, Status.PASSED)
+
+
+class TestBedrockGuardrailsCheck(unittest.TestCase):
+    """Tests for BedrockGuardrailsCheck."""
+
+    def setUp(self):
+        self.client = MagicMock()
+        self.check = BedrockGuardrailsCheck(client=self.client, region="us-east-1")
+
+    def test_no_guardrails(self):
+        self.client.list_guardrails.return_value = {"guardrails": []}
+        findings = self.check.execute()
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].status, Status.FAILED)
+
+    def test_guardrails_not_ready(self):
+        self.client.list_guardrails.return_value = {
+            "guardrails": [
+                {"id": "gr-1", "name": "test-guardrail", "status": "CREATING"}
+            ]
+        }
+        findings = self.check.execute()
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].status, Status.FAILED)
+        self.assertIn("none are in READY status", findings[0].issue)
+
+    def test_guardrails_ready(self):
+        self.client.list_guardrails.return_value = {
+            "guardrails": [
+                {"id": "gr-1", "name": "content-filter", "status": "READY"},
+                {"id": "gr-2", "name": "pii-filter", "status": "READY"},
+            ]
+        }
+        findings = self.check.execute()
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].status, Status.PASSED)
+        self.assertIn("2 active guardrail(s)", findings[0].issue)
+
+
+class TestBedrockModelAccessCheck(unittest.TestCase):
+    """Tests for BedrockModelAccessCheck."""
+
+    def setUp(self):
+        self.client = MagicMock()
+        self.check = BedrockModelAccessCheck(client=self.client, region="us-east-1")
+
+    @patch("src.checks.bedrock_checks.get_client")
+    def test_no_broad_access(self, mock_get_client):
+        iam = MagicMock()
+        mock_get_client.return_value = iam
+        paginator = MagicMock()
+        paginator.paginate.return_value = [{"Policies": [{
+            "Arn": "arn:aws:iam::123:policy/safe",
+            "PolicyName": "SafePolicy",
+            "DefaultVersionId": "v1",
+        }]}]
+        iam.get_paginator.return_value = paginator
+        iam.get_policy_version.return_value = {
+            "PolicyVersion": {
+                "Document": {
+                    "Statement": [
+                        {"Effect": "Allow", "Action": "bedrock:InvokeModel",
+                         "Resource": "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3"}
+                    ]
+                }
+            }
+        }
+        findings = self.check.execute()
+        self.assertEqual(findings[0].status, Status.PASSED)
+
+    @patch("src.checks.bedrock_checks.get_client")
+    def test_broad_bedrock_access(self, mock_get_client):
+        iam = MagicMock()
+        mock_get_client.return_value = iam
+        paginator = MagicMock()
+        paginator.paginate.return_value = [{"Policies": [{
+            "Arn": "arn:aws:iam::123:policy/broad",
+            "PolicyName": "BroadBedrockPolicy",
+            "DefaultVersionId": "v1",
+        }]}]
+        iam.get_paginator.return_value = paginator
+        iam.get_policy_version.return_value = {
+            "PolicyVersion": {
+                "Document": {
+                    "Statement": [
+                        {"Effect": "Allow", "Action": "bedrock:*", "Resource": "*"}
+                    ]
+                }
+            }
+        }
+        findings = self.check.execute()
+        self.assertEqual(findings[0].status, Status.FAILED)
+        self.assertIn("BroadBedrockPolicy", findings[0].issue)
+
+
+class TestBedrockCustomModelEncryptionCheck(unittest.TestCase):
+    """Tests for BedrockCustomModelEncryptionCheck."""
+
+    def setUp(self):
+        self.client = MagicMock()
+        self.check = BedrockCustomModelEncryptionCheck(client=self.client, region="us-east-1")
+
+    def test_no_custom_models(self):
+        self.client.list_custom_models.return_value = {"modelSummaries": []}
+        findings = self.check.execute()
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].status, Status.PASSED)
+        self.assertIn("No custom models", findings[0].issue)
+
+    def test_model_with_cmk(self):
+        self.client.list_custom_models.return_value = {
+            "modelSummaries": [{"modelArn": "arn:model/test", "modelName": "my-model"}]
+        }
+        self.client.get_custom_model.return_value = {
+            "modelKmsKeyArn": "arn:aws:kms:us-east-1:123:key/abc-123"
+        }
+        findings = self.check.execute()
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].status, Status.PASSED)
+        self.assertIn("customer-managed KMS key", findings[0].issue)
+
+    def test_model_without_cmk(self):
+        self.client.list_custom_models.return_value = {
+            "modelSummaries": [{"modelArn": "arn:model/test", "modelName": "my-model"}]
+        }
+        self.client.get_custom_model.return_value = {}
+        findings = self.check.execute()
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].status, Status.FAILED)
+        self.assertIn("AWS-managed key", findings[0].issue)
+
+
+class TestBedrockVPCEndpointCheck(unittest.TestCase):
+    """Tests for BedrockVPCEndpointCheck."""
+
+    def setUp(self):
+        self.client = MagicMock()
+        self.check = BedrockVPCEndpointCheck(client=self.client, region="us-east-1")
+
+    @patch("src.checks.bedrock_checks.get_client")
+    def test_no_vpc_endpoint(self, mock_get_client):
+        ec2 = MagicMock()
+        mock_get_client.return_value = ec2
+        ec2.describe_vpc_endpoints.return_value = {"VpcEndpoints": []}
+        findings = self.check.execute()
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].status, Status.FAILED)
+        self.assertIn("No VPC endpoint", findings[0].issue)
+
+    @patch("src.checks.bedrock_checks.get_client")
+    def test_has_vpc_endpoint(self, mock_get_client):
+        ec2 = MagicMock()
+        mock_get_client.return_value = ec2
+        ec2.describe_vpc_endpoints.return_value = {
+            "VpcEndpoints": [{"VpcId": "vpc-abc123", "State": "available"}]
+        }
+        findings = self.check.execute()
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].status, Status.PASSED)
+        self.assertIn("vpc-abc123", findings[0].issue)
 
 
 # =====================================================================

@@ -21,16 +21,16 @@ A Python-based Cloud Security Posture Management tool that scans AWS services fo
                         ┌───────────────────┐
                         │   detector.py     │
                         │   Orchestrator    │
-                        └─┬────┬────┬────┬─┘
-                          │    │    │    │
-            ┌─────────────┘    │    │    └─────────────┐
-            ▼                  ▼    ▼                   ▼
-   ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-   │  S3 Checks   │ │  RDS Checks  │ │  EC2 Checks  │ │  IAM Checks  │
-   │  (9 rules)   │ │  (5 rules)   │ │  (5 rules)   │ │  (5 rules)   │
-   └──────┬───────┘ └──────┬───────┘ └──────┬───────┘ └──────┬───────┘
-          │                │                │                │
-          └────────────────┼────────────────┼────────────────┘
+                        └┬───┬───┬───┬───┬─┘
+                         │   │   │   │   │
+          ┌──────────────┘   │   │   │   └──────────────┐
+          ▼            ┌─────┘   │   └─────┐            ▼
+ ┌──────────────┐ ┌────┴─────┐ ┌┴────────┐ ┌──────────┐ ┌──────────────┐
+ │  S3 Checks   │ │RDS Checks│ │EC2 Checks│ │IAM Checks│ │Bedrock Checks│
+ │  (5 rules)   │ │(5 rules) │ │(5 rules) │ │(5 rules) │ │  (5 rules)   │
+ └──────┬───────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘ └──────┬───────┘
+        │              │            │             │              │
+        └──────────────┼────────────┼─────────────┼──────────────┘
                                │
                                ▼
                       ┌─────────────────┐
@@ -49,7 +49,8 @@ A Python-based Cloud Security Posture Management tool that scans AWS services fo
                               ▼              ▼
                      ┌──────────────┐ ┌────────────┐
                      │  AWS Cloud   │ │  JSON/Text │
-                     │S3/RDS/EC2/IAM│ │  Report    │
+                     │ S3/RDS/EC2/ │ │  Report    │
+                     │ IAM/Bedrock │ │            │
                      └──────────────┘ └────────────┘
 ```
 
@@ -74,10 +75,11 @@ cspm/
 │   ├── checks/
 │   │   ├── base_check.py         # Abstract base class + _make_finding helper
 │   │   ├── constants.py          # Shared constants (ports, engine versions)
-│   │   ├── s3_checks.py          # 9 S3 security checks
+│   │   ├── s3_checks.py          # 5 S3 security checks
 │   │   ├── rds_checks.py         # 5 RDS security checks
 │   │   ├── ec2_checks.py         # 5 EC2 security checks
-│   │   └── iam_checks.py         # 5 IAM security checks
+│   │   ├── iam_checks.py         # 5 IAM security checks
+│   │   └── bedrock_checks.py    # 5 Bedrock security checks
 │   ├── models/
 │   │   └── findings.py           # Finding & ScanReport dataclasses, Severity/Status enums
 │   └── utils/
@@ -85,13 +87,14 @@ cspm/
 │       ├── error_handler.py      # AWS error parsing & classification
 │       └── formatter.py          # JSON & plain text report formatters
 ├── research/
-│   ├── s3_misconfigurations.md   # S3 security research (9 checks)
+│   ├── s3_misconfigurations.md   # S3 security research (5 checks)
 │   ├── rds_misconfigurations.md  # RDS security research (5 checks)
 │   ├── ec2_misconfigurations.md  # EC2 security research (5 checks)
-│   └── iam_misconfigurations.md  # IAM security research (5 checks)
+│   ├── iam_misconfigurations.md  # IAM security research (5 checks)
+│   └── bedrock_misconfigurations.md # Bedrock security research (5 checks)
 ├── reports/                      # Generated scan reports (JSON)
 └── tests/
-    └── test_checks.py            # 56 unit tests with mocked Boto3 responses
+    └── test_checks.py            # 63 unit tests with mocked Boto3 responses
 ```
 
 ## Prerequisites
@@ -99,11 +102,12 @@ cspm/
 - **Python 3.8+**
 - **AWS Account** with IAM credentials configured
 - **IAM Permissions** — the scanning identity needs read-only access:
-  - `s3:ListAllMyBuckets`, `s3:GetBucketPolicy`, `s3:GetBucketAcl`, `s3:GetBucketEncryption`, `s3:GetBucketVersioning`, `s3:GetPublicAccessBlock`, `s3:GetBucketLogging`, `s3:GetObjectLockConfiguration`
+  - `s3:ListAllMyBuckets`, `s3:GetBucketPolicy`, `s3:GetBucketAcl`, `s3:GetBucketEncryption`, `s3:GetPublicAccessBlock`
   - `s3control:GetPublicAccessBlock` (account-level public access block)
   - `rds:DescribeDBInstances`
   - `ec2:DescribeSecurityGroups`, `ec2:DescribeVolumes`, `ec2:DescribeInstances`, `ec2:DescribeKeyPairs`
   - `iam:GetAccountSummary`, `iam:ListUsers`, `iam:ListMFADevices`, `iam:ListPolicies`, `iam:GetPolicyVersion`, `iam:GetAccountPasswordPolicy`, `iam:ListAccessKeys`
+  - `bedrock:GetModelInvocationLoggingConfiguration`, `bedrock:ListGuardrails`, `bedrock:ListCustomModels`, `bedrock:GetCustomModel`
   - `sts:GetCallerIdentity`
 
 ## Installation
@@ -155,6 +159,7 @@ python -m src.main --service s3 --region us-east-1
 python -m src.main --service rds --region us-west-2
 python -m src.main --service ec2 --region eu-west-1
 python -m src.main --service iam --region us-east-1
+python -m src.main --service bedrock --region us-east-1
 ```
 
 ### Run a specific check
@@ -184,7 +189,7 @@ python -m src.main --service all --region us-east-1 --profile my-profile
 
 | Argument        | Default      | Description                                      |
 |-----------------|--------------|--------------------------------------------------|
-| `--service`     | `all`        | Service to scan: `s3`, `rds`, `ec2`, `iam`, or `all` |
+| `--service`     | `all`        | Service to scan: `s3`, `rds`, `ec2`, `iam`, `bedrock`, or `all` |
 | `--region`      | `us-east-1`  | AWS region to scan                               |
 | `--check`       | *(all)*      | Run a specific check by ID (e.g., `S3-001`)      |
 | `--output`      | `json`       | Output format: `json` or `text`                  |
@@ -201,19 +206,15 @@ python -m src.main --service all --region us-east-1 --profile my-profile
 
 ## Security Checks
 
-### S3 Checks (9)
+### S3 Checks (5)
 
 | ID     | Check                            | Severity | What It Detects                                              |
 |--------|----------------------------------|----------|--------------------------------------------------------------|
 | S3-001 | Public Bucket Access             | HIGH     | Public read/write via policies or ACLs                       |
 | S3-002 | Bucket Encryption                | HIGH     | Missing SSE-KMS encryption (distinguishes SSE-S3 vs SSE-KMS)|
-| S3-003 | Bucket Versioning                | MEDIUM   | Versioning not enabled (includes MFA Delete status)          |
-| S3-004 | Public Access Block              | HIGH     | Missing or partially disabled bucket-level public access block|
-| S3-005 | Bucket Logging                   | MEDIUM   | Server access logging not enabled                            |
-| S3-006 | Encryption in Transit (HTTPS)    | HIGH     | Missing aws:SecureTransport deny policy                      |
-| S3-007 | MFA Delete                       | MEDIUM   | MFA Delete not enabled on versioned buckets                  |
-| S3-008 | Object Lock                      | MEDIUM   | Object Lock (WORM) not enabled for immutability              |
-| S3-009 | Account-Level Public Access Block| HIGH     | Account-level public access block not configured             |
+| S3-003 | Public Access Block              | HIGH     | Missing or partially disabled bucket-level public access block|
+| S3-004 | Encryption in Transit (HTTPS)    | HIGH     | Missing aws:SecureTransport deny policy                      |
+| S3-005 | Account-Level Public Access Block| HIGH     | Account-level public access block not configured             |
 
 ### RDS Checks (5)
 
@@ -245,6 +246,16 @@ python -m src.main --service all --region us-east-1 --profile my-profile
 | IAM-004 | Password Policy          | MEDIUM   | Weak or missing account password policy                  |
 | IAM-005 | Stale Access Keys        | MEDIUM   | Active access keys older than 90 days                    |
 
+### Bedrock Checks (5)
+
+| ID      | Check                    | Severity | What It Detects                                          |
+|---------|--------------------------|----------|----------------------------------------------------------|
+| BDR-001 | Model Invocation Logging | HIGH     | Model invocation logging not enabled                     |
+| BDR-002 | Guardrails               | HIGH     | No guardrails configured for content/PII filtering       |
+| BDR-003 | Model Access Permissions | HIGH     | Overly permissive IAM policies for Bedrock model access  |
+| BDR-004 | Custom Model Encryption  | MEDIUM   | Custom models not encrypted with customer-managed KMS    |
+| BDR-005 | VPC Endpoint             | MEDIUM   | No VPC endpoint for Bedrock runtime (public internet)    |
+
 ## Example Output (JSON Report)
 
 When misconfigurations are found, a JSON report is saved to `reports/` with `description`, `impact`, and `remediation` for each issue:
@@ -257,7 +268,7 @@ When misconfigurations are found, a JSON report is saved to `reports/` with `des
   "total_misconfigurations": 2,
   "misconfigurations": [
     {
-      "check_id": "S3-006",
+      "check_id": "S3-004",
       "check_name": "S3 Encryption in Transit (HTTPS)",
       "severity": "HIGH",
       "resource_id": "my-bucket",
@@ -272,19 +283,17 @@ When misconfigurations are found, a JSON report is saved to `reports/` with `des
       ]
     },
     {
-      "check_id": "S3-003",
-      "check_name": "S3 Bucket Versioning",
-      "severity": "MEDIUM",
-      "resource_id": "my-bucket",
-      "description": "Checks whether S3 buckets have versioning enabled to protect against accidental deletion or overwrites.",
-      "issue": "Bucket 'my-bucket' does not have versioning enabled (Status: Disabled).",
-      "impact": "Without versioning, accidental or malicious deletion of objects is permanent and unrecoverable. Versioning protects against ransomware attacks, application bugs that corrupt data, and human errors.",
+      "check_id": "S3-005",
+      "check_name": "S3 Account-Level Public Access Block",
+      "severity": "HIGH",
+      "resource_id": "Account",
+      "description": "Checks whether S3 Account-Level Public Access Block is enabled.",
+      "issue": "Account-Level Public Access Block is not configured.",
+      "impact": "Without account-level Block Public Access, any bucket can be made public through a misconfigured policy or ACL.",
       "remediation": [
-        "1. Open the S3 console and select the bucket.",
-        "2. Go to 'Properties' > 'Bucket Versioning'.",
-        "3. Click 'Edit' and enable versioning.",
-        "4. Configure lifecycle rules to manage version retention and storage costs.",
-        "5. Enable MFA Delete for additional protection against unauthorized deletions."
+        "1. Open the S3 console > 'Block Public Access settings for this account'.",
+        "2. Click 'Edit' and enable all four settings.",
+        "3. Use AWS Config rule 's3-account-level-public-access-blocks' to enforce."
       ]
     }
   ]
@@ -301,7 +310,7 @@ python -m unittest tests.test_checks -v
 ```
 
 ```
-Ran 56 tests in 0.050s
+Ran 63 tests in 0.050s
 OK
 ```
 
@@ -309,7 +318,8 @@ OK
 
 Detailed security research documents with attack scenarios and step-by-step remediation for each service:
 
-- [research/s3_misconfigurations.md](research/s3_misconfigurations.md) — 9 S3 checks
+- [research/s3_misconfigurations.md](research/s3_misconfigurations.md) — 5 S3 checks
 - [research/rds_misconfigurations.md](research/rds_misconfigurations.md) — 5 RDS checks
 - [research/ec2_misconfigurations.md](research/ec2_misconfigurations.md) — 5 EC2 checks
 - [research/iam_misconfigurations.md](research/iam_misconfigurations.md) — 5 IAM checks
+- [research/bedrock_misconfigurations.md](research/bedrock_misconfigurations.md) — 5 Bedrock checks

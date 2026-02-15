@@ -1,16 +1,12 @@
 """
 S3 Security Checks Module
 
-Implements 9 security checks for Amazon S3:
+Implements 5 security checks for Amazon S3:
 1. Public Bucket Access (via policies and ACLs)
 2. Bucket Encryption (at rest — distinguishes SSE-S3 vs SSE-KMS)
-3. Bucket Versioning (includes MFA Delete status)
-4. Public Access Block (bucket-level)
-5. Bucket Logging
-6. Encryption in Transit (HTTPS enforcement via aws:SecureTransport)
-7. MFA Delete
-8. Object Lock
-9. Account-Level Public Access Block
+3. Public Access Block (bucket-level)
+4. Encryption in Transit (HTTPS enforcement via aws:SecureTransport)
+5. Account-Level Public Access Block
 """
 
 import json
@@ -229,81 +225,7 @@ class S3EncryptionCheck(BaseCheck):
 
 
 # ------------------------------------------------------------------
-# S3-003: Bucket Versioning
-# ------------------------------------------------------------------
-
-class S3VersioningCheck(BaseCheck):
-    """Check for S3 buckets without versioning enabled.
-    Also reports MFA Delete status for versioned buckets."""
-
-    check_name = "S3 Bucket Versioning"
-    service = "s3"
-    severity = Severity.MEDIUM
-    finding_id = "S3-003"
-    description = (
-        "Checks whether S3 buckets have versioning enabled to protect "
-        "against accidental deletion or overwrites. Also checks if MFA Delete "
-        "is enabled to protect versioning from being disabled by compromised credentials."
-    )
-    impact = (
-        "Without versioning, accidental or malicious deletion of objects is permanent "
-        "and unrecoverable. Versioning protects against ransomware attacks (where attackers "
-        "overwrite files with encrypted copies), application bugs that corrupt data, and "
-        "human errors. It also enables point-in-time recovery of any object."
-    )
-    remediation = [
-        "1. Open the S3 console and select the bucket.",
-        "2. Go to 'Properties' > 'Bucket Versioning'.",
-        "3. Click 'Edit' and enable versioning.",
-        "4. Configure lifecycle rules to manage version retention and storage costs.",
-        "5. Enable MFA Delete for additional protection against unauthorized deletions.",
-        "6. Note: Versioning cannot be disabled once enabled, only suspended.",
-    ]
-
-    def check(self) -> List[Finding]:
-        findings = []
-        buckets = self.context.get("buckets", self.client.list_buckets().get("Buckets", []))
-
-        for bucket in buckets:
-            bucket_name = bucket["Name"]
-            try:
-                versioning = self.client.get_bucket_versioning(Bucket=bucket_name)
-                status = versioning.get("Status", "Disabled")
-                mfa_delete = versioning.get("MFADelete", "Disabled")
-
-                if status == "Enabled":
-                    mfa_note = ""
-                    if mfa_delete != "Enabled":
-                        mfa_note = " Warning: MFA Delete is not enabled — versioning could be suspended by compromised credentials."
-                    findings.append(self._make_finding(
-                        Status.PASSED,
-                        f"Bucket '{bucket_name}' has versioning enabled (MFA Delete: {mfa_delete}).{mfa_note}",
-                        resource_id=bucket_name,
-                    ))
-                else:
-                    findings.append(self._make_finding(
-                        Status.FAILED,
-                        f"Bucket '{bucket_name}' does not have versioning enabled (Status: {status}).",
-                        resource_id=bucket_name,
-                    ))
-            except ClientError as e:
-                error_code = e.response["Error"]["Code"]
-                findings.append(self._make_finding(
-                    Status.ERROR,
-                    resource_id=bucket_name,
-                    error_message=f"Error checking bucket '{bucket_name}': {error_code}",
-                ))
-
-        if not buckets:
-            findings.append(self._make_finding(
-                Status.PASSED, "No S3 buckets found in the account.", resource_id="N/A",
-            ))
-
-        return findings
-
-
-# ------------------------------------------------------------------
-# S3-004: Public Access Block (bucket-level)
+# S3-003: Public Access Block (bucket-level)
 # ------------------------------------------------------------------
 
 class S3PublicAccessBlockCheck(BaseCheck):
@@ -312,7 +234,7 @@ class S3PublicAccessBlockCheck(BaseCheck):
     check_name = "S3 Bucket Public Access Block"
     service = "s3"
     severity = Severity.HIGH
-    finding_id = "S3-004"
+    finding_id = "S3-003"
     description = (
         "Checks whether S3 buckets have all four Public Access Block settings "
         "enabled (BlockPublicAcls, IgnorePublicAcls, BlockPublicPolicy, "
@@ -398,76 +320,7 @@ class S3PublicAccessBlockCheck(BaseCheck):
 
 
 # ------------------------------------------------------------------
-# S3-005: Bucket Logging
-# ------------------------------------------------------------------
-
-class S3LoggingCheck(BaseCheck):
-    """Check for S3 buckets without server access logging enabled."""
-
-    check_name = "S3 Bucket Logging"
-    service = "s3"
-    severity = Severity.MEDIUM
-    finding_id = "S3-005"
-    description = (
-        "Checks whether S3 buckets have server access logging enabled "
-        "to track requests for security auditing."
-    )
-    impact = (
-        "Without server access logging, there is no record of who accessed the bucket, "
-        "what operations were performed, or when. This makes it impossible to detect "
-        "unauthorized access, investigate security incidents, or meet compliance audit "
-        "requirements (PCI DSS, HIPAA, SOC 2). Attackers can exfiltrate data undetected."
-    )
-    remediation = [
-        "1. Create a dedicated logging bucket (e.g., 'my-bucket-logs') in the same region.",
-        "2. Grant the S3 log delivery group write permission to the logging bucket.",
-        "3. Open the source bucket > 'Properties' > 'Server access logging'.",
-        "4. Enable logging and specify the target logging bucket and prefix.",
-        "5. Alternatively, enable AWS CloudTrail data events for S3 for more detailed API-level logging.",
-        "6. Set up lifecycle policies on the logging bucket to manage log retention.",
-    ]
-
-    def check(self) -> List[Finding]:
-        findings = []
-        buckets = self.context.get("buckets", self.client.list_buckets().get("Buckets", []))
-
-        for bucket in buckets:
-            bucket_name = bucket["Name"]
-            try:
-                logging_config = self.client.get_bucket_logging(Bucket=bucket_name)
-                logging_enabled = logging_config.get("LoggingEnabled")
-
-                if logging_enabled:
-                    target_bucket = logging_enabled.get("TargetBucket", "Unknown")
-                    findings.append(self._make_finding(
-                        Status.PASSED,
-                        f"Bucket '{bucket_name}' has logging enabled (target: {target_bucket}).",
-                        resource_id=bucket_name,
-                    ))
-                else:
-                    findings.append(self._make_finding(
-                        Status.FAILED,
-                        f"Bucket '{bucket_name}' does not have server access logging enabled.",
-                        resource_id=bucket_name,
-                    ))
-            except ClientError as e:
-                error_code = e.response["Error"]["Code"]
-                findings.append(self._make_finding(
-                    Status.ERROR,
-                    resource_id=bucket_name,
-                    error_message=f"Error checking bucket '{bucket_name}': {error_code}",
-                ))
-
-        if not buckets:
-            findings.append(self._make_finding(
-                Status.PASSED, "No S3 buckets found in the account.", resource_id="N/A",
-            ))
-
-        return findings
-
-
-# ------------------------------------------------------------------
-# S3-006: Encryption in Transit (HTTPS)
+# S3-004: Encryption in Transit (HTTPS)
 # ------------------------------------------------------------------
 
 class S3TransitEncryptionCheck(BaseCheck):
@@ -476,7 +329,7 @@ class S3TransitEncryptionCheck(BaseCheck):
     check_name = "S3 Encryption in Transit (HTTPS)"
     service = "s3"
     severity = Severity.HIGH
-    finding_id = "S3-006"
+    finding_id = "S3-004"
     description = (
         "Checks whether S3 buckets enforce HTTPS-only access by having a "
         "bucket policy that denies requests when aws:SecureTransport is false."
@@ -550,170 +403,7 @@ class S3TransitEncryptionCheck(BaseCheck):
 
 
 # ------------------------------------------------------------------
-# S3-007: MFA Delete
-# ------------------------------------------------------------------
-
-class S3MFADeleteCheck(BaseCheck):
-    """Check for S3 buckets with versioning enabled but MFA Delete disabled."""
-
-    check_name = "S3 MFA Delete"
-    service = "s3"
-    severity = Severity.MEDIUM
-    finding_id = "S3-007"
-    description = (
-        "Checks whether S3 buckets with versioning enabled also have MFA Delete "
-        "enabled. MFA Delete requires multi-factor authentication to change the "
-        "versioning state or permanently delete object versions, protecting against "
-        "ransomware and compromised credentials."
-    )
-    impact = (
-        "Without MFA Delete, an attacker who compromises IAM credentials can suspend "
-        "versioning and permanently delete all object versions, making data unrecoverable. "
-        "This is a key ransomware attack vector — attackers disable versioning, encrypt "
-        "files with their own KMS key, and demand payment. MFA Delete requires physical "
-        "MFA device access to change versioning state."
-    )
-    remediation = [
-        "1. MFA Delete can only be enabled via the AWS CLI or API (not the console).",
-        "2. Use the root account credentials with an MFA device configured.",
-        "3. Run: aws s3api put-bucket-versioning --bucket BUCKET_NAME "
-        "--versioning-configuration Status=Enabled,MFADelete=Enabled "
-        "--mfa 'arn:aws:iam::ACCOUNT:mfa/DEVICE TOTP_CODE'",
-        "4. Ensure your root account has an MFA device configured.",
-        "5. Note: Only the bucket owner (root account) can enable MFA Delete.",
-    ]
-
-    def check(self) -> List[Finding]:
-        findings = []
-        buckets = self.context.get("buckets", self.client.list_buckets().get("Buckets", []))
-
-        for bucket in buckets:
-            bucket_name = bucket["Name"]
-            try:
-                versioning = self.client.get_bucket_versioning(Bucket=bucket_name)
-                versioning_status = versioning.get("Status", "Disabled")
-                mfa_delete = versioning.get("MFADelete", "Disabled")
-
-                if versioning_status != "Enabled":
-                    continue  # Versioning disabled is already reported by S3-003
-                elif mfa_delete == "Enabled":
-                    findings.append(self._make_finding(
-                        Status.PASSED,
-                        f"Bucket '{bucket_name}' has MFA Delete enabled.",
-                        resource_id=bucket_name,
-                    ))
-                else:
-                    findings.append(self._make_finding(
-                        Status.FAILED,
-                        f"Bucket '{bucket_name}' has versioning enabled but MFA Delete "
-                        "is not enabled. Versioning could be suspended by compromised credentials.",
-                        resource_id=bucket_name,
-                    ))
-            except ClientError as e:
-                error_code = e.response["Error"]["Code"]
-                findings.append(self._make_finding(
-                    Status.ERROR,
-                    resource_id=bucket_name,
-                    error_message=f"Error checking bucket '{bucket_name}': {error_code}",
-                ))
-
-        if not buckets:
-            findings.append(self._make_finding(
-                Status.PASSED, "No S3 buckets found in the account.", resource_id="N/A",
-            ))
-
-        return findings
-
-
-# ------------------------------------------------------------------
-# S3-008: Object Lock
-# ------------------------------------------------------------------
-
-class S3ObjectLockCheck(BaseCheck):
-    """Check for S3 buckets without Object Lock enabled."""
-
-    check_name = "S3 Object Lock"
-    service = "s3"
-    severity = Severity.MEDIUM
-    finding_id = "S3-008"
-    description = (
-        "Checks whether S3 buckets have Object Lock enabled. Object Lock "
-        "provides immutability protection using a WORM model, preventing "
-        "objects from being deleted or overwritten even by the root account. "
-        "Supports Governance Mode (time-limited) and Compliance Mode (indefinite)."
-    )
-    impact = (
-        "Without Object Lock, even a compromised root account or bucket owner can delete "
-        "or overwrite objects. Object Lock provides immutability (WORM) that protects "
-        "against ransomware, insider threats, and accidental deletion. In Compliance Mode, "
-        "no one — including AWS — can delete protected objects before the retention period expires. "
-        "Required for regulatory compliance in financial services and healthcare."
-    )
-    remediation = [
-        "1. Object Lock can only be enabled at bucket creation time.",
-        "2. Create a new bucket with Object Lock enabled.",
-        "3. Configure a default retention period and mode:",
-        "   - Governance Mode: Protects for a set retention period.",
-        "   - Compliance Mode: Protects indefinitely (cannot be overridden).",
-        "4. Migrate existing objects to the new bucket using S3 Batch Operations.",
-        "5. Object Lock requires versioning to be enabled (automatically enabled).",
-    ]
-
-    def check(self) -> List[Finding]:
-        findings = []
-        buckets = self.context.get("buckets", self.client.list_buckets().get("Buckets", []))
-
-        for bucket in buckets:
-            bucket_name = bucket["Name"]
-            try:
-                lock_config = self.client.get_object_lock_configuration(Bucket=bucket_name)
-                lock = lock_config.get("ObjectLockConfiguration", {})
-                lock_enabled = lock.get("ObjectLockEnabled", "")
-
-                if lock_enabled == "Enabled":
-                    rule = lock.get("Rule", {})
-                    retention = rule.get("DefaultRetention", {})
-                    mode = retention.get("Mode", "Not configured")
-                    days = retention.get("Days", "")
-                    years = retention.get("Years", "")
-                    period = f"{days} days" if days else f"{years} years" if years else "no default period"
-
-                    findings.append(self._make_finding(
-                        Status.PASSED,
-                        f"Bucket '{bucket_name}' has Object Lock enabled (Mode: {mode}, Retention: {period}).",
-                        resource_id=bucket_name,
-                    ))
-                else:
-                    findings.append(self._make_finding(
-                        Status.FAILED,
-                        f"Bucket '{bucket_name}' does not have Object Lock enabled.",
-                        resource_id=bucket_name,
-                    ))
-            except ClientError as e:
-                error_code = e.response["Error"]["Code"]
-                if error_code in ("ObjectLockConfigurationNotFoundError", "ObjectLockConfigurationNotFound"):
-                    findings.append(self._make_finding(
-                        Status.FAILED,
-                        f"Bucket '{bucket_name}' does not have Object Lock enabled.",
-                        resource_id=bucket_name,
-                    ))
-                else:
-                    findings.append(self._make_finding(
-                        Status.ERROR,
-                        resource_id=bucket_name,
-                        error_message=f"Error checking bucket '{bucket_name}': {error_code}",
-                    ))
-
-        if not buckets:
-            findings.append(self._make_finding(
-                Status.PASSED, "No S3 buckets found in the account.", resource_id="N/A",
-            ))
-
-        return findings
-
-
-# ------------------------------------------------------------------
-# S3-009: Account-Level Public Access Block
+# S3-005: Account-Level Public Access Block
 # ------------------------------------------------------------------
 
 class S3AccountPublicAccessBlockCheck(BaseCheck):
@@ -722,7 +412,7 @@ class S3AccountPublicAccessBlockCheck(BaseCheck):
     check_name = "S3 Account-Level Public Access Block"
     service = "s3"
     severity = Severity.HIGH
-    finding_id = "S3-009"
+    finding_id = "S3-005"
     description = (
         "Checks whether S3 Account-Level Public Access Block is enabled. "
         "This provides a safety net across all buckets in the account, preventing "
@@ -810,15 +500,11 @@ class S3AccountPublicAccessBlockCheck(BaseCheck):
         return findings
 
 
-# Registry of all S3 checks — ordered HIGH → MEDIUM
+# Registry of all S3 checks (all HIGH severity)
 S3_CHECKS = [
-    S3PublicAccessCheck,           # S3-001  HIGH
-    S3EncryptionCheck,             # S3-002  HIGH
-    S3PublicAccessBlockCheck,      # S3-004  HIGH
-    S3TransitEncryptionCheck,      # S3-006  HIGH
-    S3AccountPublicAccessBlockCheck,  # S3-009  HIGH
-    S3VersioningCheck,             # S3-003  MEDIUM
-    S3LoggingCheck,                # S3-005  MEDIUM
-    S3MFADeleteCheck,              # S3-007  MEDIUM
-    S3ObjectLockCheck,             # S3-008  MEDIUM
+    S3PublicAccessCheck,              # S3-001  HIGH
+    S3EncryptionCheck,                # S3-002  HIGH
+    S3PublicAccessBlockCheck,         # S3-003  HIGH
+    S3TransitEncryptionCheck,         # S3-004  HIGH
+    S3AccountPublicAccessBlockCheck,  # S3-005  HIGH
 ]
